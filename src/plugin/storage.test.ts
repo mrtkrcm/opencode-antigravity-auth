@@ -41,10 +41,13 @@ describe("Storage Migration", () => {
       const v3 = migrateV2ToV3(v2);
 
       expect(v3.version).toBe(3);
-      expect(v3.accounts[0].rateLimitResetTimes).toEqual({
+      const account = v3.accounts[0];
+      if (!account) throw new Error("Account not found");
+      
+      expect(account.rateLimitResetTimes).toEqual({
         "gemini-antigravity": future,
       });
-      expect(v3.accounts[0].rateLimitResetTimes?.["gemini-cli"]).toBeUndefined();
+      expect(account.rateLimitResetTimes?.["gemini-cli"]).toBeUndefined();
     });
 
     it("preserves claude rate limits", () => {
@@ -64,8 +67,10 @@ describe("Storage Migration", () => {
       };
 
       const v3 = migrateV2ToV3(v2);
+      const account = v3.accounts[0];
+      if (!account) throw new Error("Account not found");
 
-      expect(v3.accounts[0].rateLimitResetTimes).toEqual({
+      expect(account.rateLimitResetTimes).toEqual({
         claude: future,
       });
     });
@@ -88,8 +93,10 @@ describe("Storage Migration", () => {
       };
 
       const v3 = migrateV2ToV3(v2);
+      const account = v3.accounts[0];
+      if (!account) throw new Error("Account not found");
 
-      expect(v3.accounts[0].rateLimitResetTimes).toEqual({
+      expect(account.rateLimitResetTimes).toEqual({
         claude: future,
         "gemini-antigravity": future,
       });
@@ -113,11 +120,13 @@ describe("Storage Migration", () => {
       };
 
       const v3 = migrateV2ToV3(v2);
+      const account = v3.accounts[0];
+      if (!account) throw new Error("Account not found");
 
-      expect(v3.accounts[0].rateLimitResetTimes).toEqual({
+      expect(account.rateLimitResetTimes).toEqual({
         "gemini-antigravity": future,
       });
-      expect(v3.accounts[0].rateLimitResetTimes?.claude).toBeUndefined();
+      expect(account.rateLimitResetTimes?.claude).toBeUndefined();
     });
 
     it("removes rateLimitResetTimes object if all keys are expired", () => {
@@ -138,8 +147,10 @@ describe("Storage Migration", () => {
       };
 
       const v3 = migrateV2ToV3(v2);
+      const account = v3.accounts[0];
+      if (!account) throw new Error("Account not found");
 
-      expect(v3.accounts[0].rateLimitResetTimes).toBeUndefined();
+      expect(account.rateLimitResetTimes).toBeUndefined();
     });
   });
 
@@ -170,12 +181,18 @@ describe("Storage Migration", () => {
 
       expect(result).not.toBeNull();
       expect(result?.version).toBe(3);
-      expect(result?.accounts[0].rateLimitResetTimes).toEqual({
+      
+      const account = result?.accounts[0];
+      if (!account) throw new Error("Account not found");
+      
+      expect(account.rateLimitResetTimes).toEqual({
         "gemini-antigravity": future,
       });
 
       expect(fs.writeFile).toHaveBeenCalled();
       const saveCall = vi.mocked(fs.writeFile).mock.calls[0];
+      if (!saveCall) throw new Error("saveAccounts was not called");
+      
       const savedContent = JSON.parse(saveCall[1] as string);
       expect(savedContent.version).toBe(3);
       expect(savedContent.accounts[0].rateLimitResetTimes).toEqual({
