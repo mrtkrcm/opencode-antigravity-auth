@@ -10,6 +10,7 @@ import {
   ANTIGRAVITY_HEADERS,
 } from "../constants";
 import { createLogger } from "../plugin/logger";
+import { calculateTokenExpiry } from "../plugin/auth";
 
 const log = createLogger("oauth");
 
@@ -189,6 +190,7 @@ export async function exchangeAntigravity(
   try {
     const { verifier, projectId } = decodeState(state);
 
+    const startTime = Date.now();
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: {
@@ -240,7 +242,7 @@ export async function exchangeAntigravity(
       type: "success",
       refresh: storedRefresh,
       access: tokenPayload.access_token,
-      expires: Date.now() + tokenPayload.expires_in * 1000,
+      expires: calculateTokenExpiry(startTime, tokenPayload.expires_in),
       email: userInfo.email,
       projectId: effectiveProjectId || "",
     };

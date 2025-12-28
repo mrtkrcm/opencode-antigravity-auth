@@ -36,3 +36,17 @@ export function accessTokenExpired(auth: OAuthAuthDetails): boolean {
   }
   return auth.expires <= Date.now() + ACCESS_TOKEN_EXPIRY_BUFFER_MS;
 }
+
+/**
+ * Calculates absolute expiry timestamp based on a duration.
+ * @param requestTimeMs The local time when the request was initiated
+ * @param expiresInSeconds The duration returned by the server
+ */
+export function calculateTokenExpiry(requestTimeMs: number, expiresInSeconds: unknown): number {
+  const seconds = typeof expiresInSeconds === "number" ? expiresInSeconds : 3600;
+  // Safety check for bad data - if it's not a positive number, treat as immediately expired
+  if (isNaN(seconds) || seconds <= 0) {
+    return requestTimeMs;
+  }
+  return requestTimeMs + seconds * 1000;
+}

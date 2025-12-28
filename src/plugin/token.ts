@@ -1,5 +1,5 @@
 import { ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET } from "../constants";
-import { formatRefreshParts, parseRefreshParts } from "./auth";
+import { formatRefreshParts, parseRefreshParts, calculateTokenExpiry } from "./auth";
 import { clearCachedAuth, storeCachedAuth } from "./cache";
 import { createLogger } from "./logger";
 import { invalidateProjectContextCache } from "./project";
@@ -93,6 +93,7 @@ export async function refreshAccessToken(
   }
 
   try {
+    const startTime = Date.now();
     const response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: {
@@ -150,7 +151,7 @@ export async function refreshAccessToken(
     const updatedAuth: OAuthAuthDetails = {
       ...auth,
       access: payload.access_token,
-      expires: Date.now() + payload.expires_in * 1000,
+      expires: calculateTokenExpiry(startTime, payload.expires_in),
       refresh: formatRefreshParts(refreshedParts),
     };
 
