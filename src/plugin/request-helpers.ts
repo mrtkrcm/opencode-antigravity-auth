@@ -489,15 +489,22 @@ function cleanupRequiredFields(schema: any): any {
 
   let result: any = { ...schema };
 
-  // Clean up required array if properties exist
-  if (Array.isArray(result.required) && result.properties && typeof result.properties === "object") {
-    const validRequired = result.required.filter((req: string) => 
-      Object.prototype.hasOwnProperty.call(result.properties, req)
-    );
-    if (validRequired.length === 0) {
+  // Clean up required array - handles Issue #39 (Gemini 3 schema validation errors)
+  if (Array.isArray(result.required)) {
+    if (result.properties && typeof result.properties === "object") {
+      // Filter to only include properties that exist
+      const validRequired = result.required.filter((req: string) =>
+        Object.prototype.hasOwnProperty.call(result.properties, req)
+      );
+      if (validRequired.length === 0) {
+        delete result.required;
+      } else if (validRequired.length !== result.required.length) {
+        result.required = validRequired;
+      }
+    } else {
+      // No properties defined - required array is invalid, remove it
+      // This fixes Gemini 3 schema validation errors (Issue #39)
       delete result.required;
-    } else if (validRequired.length !== result.required.length) {
-      result.required = validRequired;
     }
   }
 
