@@ -70,8 +70,9 @@ const QUOTA_PREFIX_REGEX = /^antigravity-/i;
  * - claude/gpt: Only exist on Antigravity
  * - gemini-2.5: Route via Antigravity because Antigravity OAuth doesn't have
  *   generative-language scope required for Gemini CLI endpoint
+ * - gemini-3: Route via Antigravity (default for users with Antigravity OAuth)
  */
-const ANTIGRAVITY_ONLY_MODELS = /^(claude|gpt|gemini-2\.5)/i;
+const ANTIGRAVITY_ONLY_MODELS = /^(claude|gpt|gemini-2\.5|gemini-3)/i;
 
 /**
  * Models that support thinking tier suffixes.
