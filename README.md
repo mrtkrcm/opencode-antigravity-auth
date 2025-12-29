@@ -451,10 +451,42 @@ echo '{"debug": true}' > ~/.config/opencode/antigravity.json
 
 Logs are written to `~/.config/opencode/antigravity-logs/` (or `log_dir` if configured).
 
+## Custom OAuth Client (Advanced)
+
+If you encounter "insufficient authentication scopes" errors, you may need to use your own Google OAuth client with additional scopes.
+
+**When you need this**:
+- Error: "Request had insufficient authentication scopes"
+- Error: "Unregistered scope(s) in the request: generative-language"
+- You need access to Gemini API features not available with the default client
+
+**Quick Setup**:
+
+1. Create a Google Cloud project and OAuth client (see [detailed guide](docs/CUSTOM_OAUTH_SETUP.md))
+2. Enable the Generative Language API
+3. Add required scopes to your OAuth consent screen
+4. Set environment variables:
+
+```bash
+export ANTIGRAVITY_CLIENT_ID="YOUR_CLIENT_ID.apps.googleusercontent.com"
+export ANTIGRAVITY_CLIENT_SECRET="YOUR_CLIENT_SECRET"
+export ANTIGRAVITY_SCOPES="https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/userinfo.profile,https://www.googleapis.com/auth/cclog,https://www.googleapis.com/auth/experimentsandconfigs,https://www.googleapis.com/auth/generative-language"
+```
+
+5. Re-authenticate:
+
+```bash
+opencode auth logout google
+opencode auth login
+```
+
+**Full Guide**: See [Custom OAuth Setup Guide](docs/CUSTOM_OAUTH_SETUP.md) for detailed instructions.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) - Plugin internals and request flow
 - [API Spec](docs/ANTIGRAVITY_API_SPEC.md) - Antigravity API reference
+- [Custom OAuth Setup](docs/CUSTOM_OAUTH_SETUP.md) - Using your own OAuth credentials
 
 ## License
 
