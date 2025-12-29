@@ -160,12 +160,12 @@ describe("accessTokenExpired", () => {
     expect(accessTokenExpired(auth)).toBe(true);
   });
 
-  it("returns true when token expires within buffer period (60 seconds)", () => {
+  it("returns true when token expires within buffer period (5 minutes)", () => {
     const auth: OAuthAuthDetails = {
       type: "oauth",
       refresh: "token",
       access: "access-token",
-      expires: Date.now() + 30000, // expires in 30 seconds (within 60s buffer)
+      expires: Date.now() + 2 * 60 * 1000, // expires in 2 minutes (within 5 min buffer)
     };
     expect(accessTokenExpired(auth)).toBe(true);
   });
@@ -175,20 +175,17 @@ describe("accessTokenExpired", () => {
       type: "oauth",
       refresh: "token",
       access: "access-token",
-      expires: Date.now() + 120000, // expires in 2 minutes
+      expires: Date.now() + 10 * 60 * 1000, // expires in 10 minutes (outside 5 min buffer)
     };
     expect(accessTokenExpired(auth)).toBe(false);
   });
 
   it("returns false when token expires exactly at buffer boundary", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(0));
-
     const auth: OAuthAuthDetails = {
       type: "oauth",
       refresh: "token",
       access: "access-token",
-      expires: 60001, // expires 60001ms from now, just outside 60s buffer
+      expires: Date.now() + 5 * 60 * 1000 + 1000, // expires just outside 5 min buffer
     };
     expect(accessTokenExpired(auth)).toBe(false);
   });

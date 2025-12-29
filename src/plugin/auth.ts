@@ -1,6 +1,13 @@
 import type { AuthDetails, OAuthAuthDetails, RefreshParts } from "./types";
 
-const ACCESS_TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
+/**
+ * Buffer time before token expiry to trigger refresh.
+ * 5 minutes provides safety margin for:
+ * - Slow networks and high latency requests
+ * - Clock skew between client and server
+ * - In-flight requests that may take time to complete
+ */
+const ACCESS_TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 export function isOAuthAuth(auth: AuthDetails): auth is OAuthAuthDetails {
   return auth.type === "oauth";

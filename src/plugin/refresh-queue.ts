@@ -23,6 +23,15 @@ import { createLogger } from "./logger";
 
 const log = createLogger("refresh-queue");
 
+/**
+ * Adds ±10% jitter to a delay value to prevent thundering herd.
+ * Multiple accounts/instances won't refresh at exactly the same time.
+ */
+function addJitter(delayMs: number): number {
+  const jitterFactor = 0.9 + Math.random() * 0.2; // 0.9 to 1.1
+  return Math.floor(delayMs * jitterFactor);
+}
+
 /** Configuration for the proactive refresh queue */
 export interface ProactiveRefreshConfig {
   /** Enable proactive token refresh (default: true) */
@@ -224,6 +233,25 @@ export class ProactiveRefreshQueue {
   }
 
   /**
+   * Check if any accounts have expired or are about to expire imminently.
+   * Used to determine if immediate refresh is needed on startup.
+   */
+  private hasUrgentRefreshNeeds(): boolean {
+    if (!this.accountManager) {
+      return false;
+    }
+
+    const urgentThresholdMs = 60 * 1000; // 1 minute
+    const now = Date.now();
+
+    return this.accountManager.getAccounts().some((account) => {
+      if (!account.expires) return false;
+      // Token expired or expires within 1 minute
+      return account.expires <= now + urgentThresholdMs;
+    });
+  }
+
+  /**
    * Start the background refresh queue.
    */
   start(): void {
@@ -237,32 +265,58 @@ export class ProactiveRefreshQueue {
     }
 
     this.state.isRunning = true;
-    const intervalMs = this.config.checkIntervalSeconds * 1000;
+    const baseIntervalMs = this.config.checkIntervalSeconds * 1000;
 
     log.debug("Started proactive refresh queue", {
       checkIntervalSeconds: this.config.checkIntervalSeconds,
       bufferSeconds: this.config.bufferSeconds,
     });
 
-    // Run initial check after a short delay (let things settle)
-    setTimeout(() => {
-      if (this.state.isRunning) {
-        this.runRefreshCheck().catch((error) => {
-          log.error("Initial check failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-      }
-    }, 5000);
-
-    // Set up periodic checks
-    this.state.intervalHandle = setInterval(() => {
+    // Check if we need immediate refresh (expired or expiring soon)
+    if (this.hasUrgentRefreshNeeds()) {
+      log.info("Detected tokens needing urgent refresh, running immediate check");
+      // Run immediately for urgent cases
       this.runRefreshCheck().catch((error) => {
-        log.error("Check failed", {
+        log.error("Urgent initial check failed", {
           error: error instanceof Error ? error.message : String(error),
         });
       });
-    }, intervalMs);
+    } else {
+      // Run initial check after a short jittered delay (let things settle)
+      const initialDelay = addJitter(3000); // ~3 seconds with jitter
+      setTimeout(() => {
+        if (this.state.isRunning) {
+          this.runRefreshCheck().catch((error) => {
+            log.error("Initial check failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+      }, initialDelay);
+    }
+
+    // Set up periodic checks with jittered interval
+    // Using setTimeout chain instead of setInterval to add jitter to each iteration
+    const scheduleNextCheck = (): void => {
+      if (!this.state.isRunning) {
+        return;
+      }
+
+      const jitteredIntervalMs = addJitter(baseIntervalMs);
+      this.state.intervalHandle = setTimeout(() => {
+        this.runRefreshCheck()
+          .catch((error) => {
+            log.error("Check failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          })
+          .finally(() => {
+            scheduleNextCheck();
+          });
+      }, jitteredIntervalMs) as unknown as ReturnType<typeof setInterval>;
+    };
+
+    scheduleNextCheck();
   }
 
   /**
@@ -276,6 +330,8 @@ export class ProactiveRefreshQueue {
     this.state.isRunning = false;
 
     if (this.state.intervalHandle) {
+      // Clear both setTimeout and setInterval (works for both)
+      clearTimeout(this.state.intervalHandle as unknown as ReturnType<typeof setTimeout>);
       clearInterval(this.state.intervalHandle);
       this.state.intervalHandle = null;
     }
