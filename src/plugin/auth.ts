@@ -1,6 +1,13 @@
 import type { AuthDetails, OAuthAuthDetails, RefreshParts } from "./types";
 
-const ACCESS_TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
+/**
+ * Buffer time before token expiry to trigger refresh.
+ * 5 minutes provides safety margin for:
+ * - Slow networks and high latency requests
+ * - Clock skew between client and server
+ * - In-flight requests that may take time to complete
+ */
+const ACCESS_TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 export function isOAuthAuth(auth: AuthDetails): auth is OAuthAuthDetails {
   return auth.type === "oauth";
@@ -35,4 +42,18 @@ export function accessTokenExpired(auth: OAuthAuthDetails): boolean {
     return true;
   }
   return auth.expires <= Date.now() + ACCESS_TOKEN_EXPIRY_BUFFER_MS;
+}
+
+/**
+ * Calculates absolute expiry timestamp based on a duration.
+ * @param requestTimeMs The local time when the request was initiated
+ * @param expiresInSeconds The duration returned by the server
+ */
+export function calculateTokenExpiry(requestTimeMs: number, expiresInSeconds: unknown): number {
+  const seconds = typeof expiresInSeconds === "number" ? expiresInSeconds : 3600;
+  // Safety check for bad data - if it's not a positive number, treat as immediately expired
+  if (isNaN(seconds) || seconds <= 0) {
+    return requestTimeMs;
+  }
+  return requestTimeMs + seconds * 1000;
 }

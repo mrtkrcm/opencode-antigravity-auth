@@ -55,6 +55,8 @@ export interface AccountStorage {
   activeIndex: number;
 }
 
+export type CooldownReason = "auth-failure" | "network-error" | "project-error";
+
 export interface AccountMetadataV3 {
   email?: string;
   refreshToken: string;
@@ -64,6 +66,8 @@ export interface AccountMetadataV3 {
   lastUsed: number;
   lastSwitchReason?: "rate-limit" | "initial" | "rotation";
   rateLimitResetTimes?: RateLimitStateV3;
+  coolingDownUntil?: number;
+  cooldownReason?: CooldownReason;
 }
 
 export interface AccountStorageV3 {
@@ -90,6 +94,68 @@ function getConfigDir(): string {
 
 export function getStoragePath(): string {
   return join(getConfigDir(), "antigravity-accounts.json");
+}
+
+export function deduplicateAccountsByEmail(accounts: AccountMetadata[]): AccountMetadata[] {
+  const emailToNewestIndex = new Map<string, number>();
+  const indicesToKeep = new Set<number>();
+  
+  // First pass: find the newest account for each email (by lastUsed, then addedAt)
+  for (let i = 0; i < accounts.length; i++) {
+    const acc = accounts[i];
+    if (!acc) continue;
+    
+    if (!acc.email) {
+      // No email - keep this account (can't deduplicate without email)
+      indicesToKeep.add(i);
+      continue;
+    }
+    
+    const existingIndex = emailToNewestIndex.get(acc.email);
+    if (existingIndex === undefined) {
+      emailToNewestIndex.set(acc.email, i);
+      continue;
+    }
+    
+    // Compare to find which is newer
+    const existing = accounts[existingIndex];
+    if (!existing) {
+      emailToNewestIndex.set(acc.email, i);
+      continue;
+    }
+    
+    // Prefer higher lastUsed, then higher addedAt
+    // Compare fields separately to avoid integer overflow with large timestamps
+    const currLastUsed = acc.lastUsed || 0;
+    const existLastUsed = existing.lastUsed || 0;
+    const currAddedAt = acc.addedAt || 0;
+    const existAddedAt = existing.addedAt || 0;
+
+    const isNewer = currLastUsed > existLastUsed ||
+      (currLastUsed === existLastUsed && currAddedAt > existAddedAt);
+
+    if (isNewer) {
+      emailToNewestIndex.set(acc.email, i);
+    }
+  }
+  
+  // Add all the newest email-based indices to the keep set
+  for (const idx of emailToNewestIndex.values()) {
+    indicesToKeep.add(idx);
+  }
+  
+  // Build the deduplicated list, preserving original order for kept items
+  const result: AccountMetadata[] = [];
+  for (let i = 0; i < accounts.length; i++) {
+    if (indicesToKeep.has(i)) {
+      const acc = accounts[i];
+      if (acc) {
+        result.push(acc);
+      }
+    }
+  }
+  
+  return result;
 }
 
 function migrateV1ToV2(v1: AccountStorageV1): AccountStorage {
@@ -183,15 +249,28 @@ export async function loadAccounts(): Promise<AccountStorageV3 | null> {
       return null;
     }
 
-    if (typeof storage.activeIndex !== "number" || !Number.isInteger(storage.activeIndex)) {
-      storage.activeIndex = 0;
+    // Validate accounts have required fields
+    const validAccounts = storage.accounts.filter((a): a is AccountMetadata => {
+      return !!a && typeof a === "object" && typeof (a as AccountMetadata).refreshToken === "string";
+    });
+
+    // Deduplicate accounts by email (keeps newest entry for each email)
+    const deduplicatedAccounts = deduplicateAccountsByEmail(validAccounts);
+
+    // Clamp activeIndex to valid range after deduplication
+    let activeIndex = typeof storage.activeIndex === "number" && Number.isFinite(storage.activeIndex) ? storage.activeIndex : 0;
+    if (deduplicatedAccounts.length > 0) {
+      activeIndex = Math.min(activeIndex, deduplicatedAccounts.length - 1);
+      activeIndex = Math.max(activeIndex, 0);
+    } else {
+      activeIndex = 0;
     }
 
-    if (storage.activeIndex < 0 || storage.activeIndex >= storage.accounts.length) {
-      storage.activeIndex = 0;
-    }
-
-    return storage;
+    return {
+      version: 3,
+      accounts: deduplicatedAccounts,
+      activeIndex,
+    };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {

@@ -88,6 +88,11 @@ async function runBackgroundUpdateCheck(
     return;
   }
 
+  if (currentVersion.includes('-')) {
+    debugLog(`[auto-update-checker] Prerelease version (${currentVersion}), skipping auto-update`);
+    return;
+  }
+
   const latestVersion = await getLatestVersion();
   if (!latestVersion) {
     debugLog("[auto-update-checker] Failed to fetch latest version");

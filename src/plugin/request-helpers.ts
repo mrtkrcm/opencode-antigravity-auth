@@ -1,5 +1,9 @@
 import { KEEP_THINKING_BLOCKS } from "../constants.js";
 import { createLogger } from "./logger";
+import {
+  EMPTY_SCHEMA_PLACEHOLDER_NAME,
+  EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
+} from "../constants";
 
 const log = createLogger("request-helpers");
 
@@ -294,9 +298,69 @@ function scoreSchemaOption(schema: any): { score: number; typeName: string } {
 }
 
 /**
+ * Checks if an anyOf/oneOf array represents enum choices.
+ * Returns the merged enum values if so, otherwise null.
+ *
+ * Handles patterns like:
+ * - anyOf: [{ const: "a" }, { const: "b" }]
+ * - anyOf: [{ enum: ["a"] }, { enum: ["b"] }]
+ * - anyOf: [{ type: "string", const: "a" }, { type: "string", const: "b" }]
+ */
+function tryMergeEnumFromUnion(options: any[]): string[] | null {
+  if (!Array.isArray(options) || options.length === 0) {
+    return null;
+  }
+
+  const enumValues: string[] = [];
+
+  for (const option of options) {
+    if (!option || typeof option !== "object") {
+      return null;
+    }
+
+    // Check for const value
+    if (option.const !== undefined) {
+      enumValues.push(String(option.const));
+      continue;
+    }
+
+    // Check for single-value enum
+    if (Array.isArray(option.enum) && option.enum.length === 1) {
+      enumValues.push(String(option.enum[0]));
+      continue;
+    }
+
+    // Check for multi-value enum (merge all values)
+    if (Array.isArray(option.enum) && option.enum.length > 0) {
+      for (const val of option.enum) {
+        enumValues.push(String(val));
+      }
+      continue;
+    }
+
+    // If option has complex structure (properties, items, etc.), it's not a simple enum
+    if (option.properties || option.items || option.anyOf || option.oneOf || option.allOf) {
+      return null;
+    }
+
+    // If option has only type (no const/enum), it's not an enum pattern
+    if (option.type && !option.const && !option.enum) {
+      return null;
+    }
+  }
+
+  // Only return if we found actual enum values
+  return enumValues.length > 0 ? enumValues : null;
+}
+
+/**
  * Phase 2b: Flattens anyOf/oneOf to the best option with type hints.
  * { anyOf: [{ type: "string" }, { type: "number" }] }
  * → { type: "string", description: "(Accepts: string | number)" }
+ *
+ * Special handling for enum patterns:
+ * { anyOf: [{ const: "a" }, { const: "b" }] }
+ * → { type: "string", enum: ["a", "b"] }
  */
 function flattenAnyOfOneOf(schema: any): any {
   if (!schema || typeof schema !== "object") {
@@ -315,6 +379,25 @@ function flattenAnyOfOneOf(schema: any): any {
       const options = result[unionKey];
       const parentDesc = typeof result.description === "string" ? result.description : "";
 
+      // First, check if this is an enum pattern (anyOf with const/enum values)
+      // This is crucial for tools like WebFetch where format: anyOf[{const:"text"},{const:"markdown"},{const:"html"}]
+      const mergedEnum = tryMergeEnumFromUnion(options);
+      if (mergedEnum !== null) {
+        // This is an enum pattern - merge all values into a single enum
+        const { [unionKey]: _, ...rest } = result;
+        result = {
+          ...rest,
+          type: "string",
+          enum: mergedEnum,
+        };
+        // Preserve parent description
+        if (parentDesc) {
+          result.description = parentDesc;
+        }
+        continue;
+      }
+
+      // Not an enum pattern - use standard flattening logic
       // Score each option and find the best
       let bestIdx = 0;
       let bestScore = -1;
@@ -448,26 +531,33 @@ function flattenTypeArrays(schema: any, nullableFields?: Map<string, string[]>, 
 
 /**
  * Phase 3: Removes unsupported keywords after hints have been extracted.
+ * @param insideProperties - When true, keys are property NAMES (preserve); when false, keys are JSON Schema keywords (filter).
  */
-function removeUnsupportedKeywords(schema: any): any {
+function removeUnsupportedKeywords(schema: any, insideProperties: boolean = false): any {
   if (!schema || typeof schema !== "object") {
     return schema;
   }
 
   if (Array.isArray(schema)) {
-    return schema.map(item => removeUnsupportedKeywords(item));
+    return schema.map(item => removeUnsupportedKeywords(item, false));
   }
 
   const result: any = {};
   for (const [key, value] of Object.entries(schema)) {
-    // Skip unsupported keywords
-    if ((UNSUPPORTED_KEYWORDS as readonly string[]).includes(key)) {
+    if (!insideProperties && (UNSUPPORTED_KEYWORDS as readonly string[]).includes(key)) {
       continue;
     }
 
-    // Recursively process nested objects
     if (typeof value === "object" && value !== null) {
-      result[key] = removeUnsupportedKeywords(value);
+      if (key === "properties") {
+        const propertiesResult: any = {};
+        for (const [propName, propSchema] of Object.entries(value as object)) {
+          propertiesResult[propName] = removeUnsupportedKeywords(propSchema, false);
+        }
+        result[key] = propertiesResult;
+      } else {
+        result[key] = removeUnsupportedKeywords(value, false);
+      }
     } else {
       result[key] = value;
     }
@@ -544,12 +634,12 @@ function addEmptySchemaPlaceholder(schema: any): any {
 
     if (!hasProperties) {
       result.properties = {
-        reason: {
-          type: "string",
-          description: "Brief explanation of why you are calling this tool",
+        [EMPTY_SCHEMA_PLACEHOLDER_NAME]: {
+          type: "boolean",
+          description: EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
         },
       };
-      result.required = ["reason"];
+      result.required = [EMPTY_SCHEMA_PLACEHOLDER_NAME];
     }
   }
 
@@ -626,6 +716,7 @@ export interface AntigravityUsageMetadata {
   promptTokenCount?: number;
   candidatesTokenCount?: number;
   cachedContentTokenCount?: number;
+  thoughtsTokenCount?: number;
 }
 
 /**
@@ -929,11 +1020,22 @@ function sanitizeThinkingPart(part: Record<string, unknown>): Record<string, unk
   return stripCacheControlRecursively(part) as Record<string, unknown>;
 }
 
+function findLastAssistantIndex(contents: any[], roleValue: "model" | "assistant"): number {
+  for (let i = contents.length - 1; i >= 0; i--) {
+    const content = contents[i];
+    if (content && typeof content === "object" && content.role === roleValue) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function filterContentArray(
   contentArray: any[],
   sessionId?: string,
   getCachedSignatureFn?: (sessionId: string, text: string) => string | undefined,
   isClaudeModel?: boolean,
+  isLastAssistantMessage: boolean = false,
 ): any[] {
   // For Claude models, strip thinking blocks by default for reliability
   // User can opt-in to keep thinking via OPENCODE_ANTIGRAVITY_KEEP_THINKING=1
@@ -958,6 +1060,14 @@ function filterContentArray(
     const hasSignature = hasSignatureField(item);
 
     if (!isThinking && !hasSignature) {
+      filtered.push(item);
+      continue;
+    }
+
+    // CRITICAL: For the LAST assistant message, thinking blocks MUST remain byte-for-byte
+    // identical to what the API returned. Anthropic rejects any modification.
+    // Pass through unchanged - do NOT sanitize or reconstruct.
+    if (isLastAssistantMessage && (isThinking || hasSignature)) {
       filtered.push(item);
       continue;
     }
@@ -1002,10 +1112,14 @@ export function filterUnsignedThinkingBlocks(
   getCachedSignatureFn?: (sessionId: string, text: string) => string | undefined,
   isClaudeModel?: boolean,
 ): any[] {
-  return contents.map((content: any) => {
+  const lastAssistantIdx = findLastAssistantIndex(contents, "model");
+
+  return contents.map((content: any, idx: number) => {
     if (!content || typeof content !== "object") {
       return content;
     }
+
+    const isLastAssistant = idx === lastAssistantIdx;
 
     if (Array.isArray((content as any).parts)) {
       const filteredParts = filterContentArray(
@@ -1013,6 +1127,7 @@ export function filterUnsignedThinkingBlocks(
         sessionId,
         getCachedSignatureFn,
         isClaudeModel,
+        isLastAssistant,
       );
 
       const trimmedParts = (content as any).role === "model" && !isClaudeModel
@@ -1024,11 +1139,15 @@ export function filterUnsignedThinkingBlocks(
 
     if (Array.isArray((content as any).content)) {
       const isAssistantRole = (content as any).role === "assistant";
+      const isLastAssistantContent = idx === lastAssistantIdx || 
+        (isAssistantRole && idx === findLastAssistantIndex(contents, "assistant"));
+      
       const filteredContent = filterContentArray(
         (content as any).content,
         sessionId,
         getCachedSignatureFn,
         isClaudeModel,
+        isLastAssistantContent,
       );
 
       const trimmedContent = isAssistantRole && !isClaudeModel
@@ -1051,18 +1170,23 @@ export function filterMessagesThinkingBlocks(
   getCachedSignatureFn?: (sessionId: string, text: string) => string | undefined,
   isClaudeModel?: boolean,
 ): any[] {
-  return messages.map((message: any) => {
+  const lastAssistantIdx = findLastAssistantIndex(messages, "assistant");
+
+  return messages.map((message: any, idx: number) => {
     if (!message || typeof message !== "object") {
       return message;
     }
 
     if (Array.isArray((message as any).content)) {
       const isAssistantRole = (message as any).role === "assistant";
+      const isLastAssistant = isAssistantRole && idx === lastAssistantIdx;
+      
       const filteredContent = filterContentArray(
         (message as any).content,
         sessionId,
         getCachedSignatureFn,
         isClaudeModel,
+        isLastAssistant,
       );
 
       const trimmedContent = isAssistantRole && !isClaudeModel
@@ -1151,19 +1275,23 @@ function transformGeminiCandidate(candidate: any): any {
     // Handle Gemini-style: thought: true
     if (part.thought === true) {
       thinkingTexts.push(part.text || "");
-      return { ...part, type: "reasoning" };
+      const transformed: Record<string, unknown> = { ...part, type: "reasoning" };
+      if (part.cache_control) transformed.cache_control = part.cache_control;
+      return transformed;
     }
 
     // Handle Anthropic-style in candidates: type: "thinking"
     if (part.type === "thinking") {
       const thinkingText = part.thinking || part.text || "";
       thinkingTexts.push(thinkingText);
-      return {
+      const transformed: Record<string, unknown> = {
         ...part,
         type: "reasoning",
         text: thinkingText,
         thought: true,
       };
+      if (part.cache_control) transformed.cache_control = part.cache_control;
+      return transformed;
     }
 
     // Handle functionCall: parse JSON strings in args
@@ -1313,6 +1441,7 @@ export function extractUsageMetadata(body: AntigravityApiBody): AntigravityUsage
     promptTokenCount: toNumber(asRecord.promptTokenCount),
     candidatesTokenCount: toNumber(asRecord.candidatesTokenCount),
     cachedContentTokenCount: toNumber(asRecord.cachedContentTokenCount),
+    thoughtsTokenCount: toNumber(asRecord.thoughtsTokenCount),
   };
 }
 
@@ -2185,6 +2314,11 @@ export function injectParameterSignatures(
     if (!Array.isArray(declarations)) return tool;
 
     const newDeclarations = declarations.map((decl: any) => {
+      // Skip if signature already injected (avoids duplicate injection)
+      if (decl.description?.includes("STRICT PARAMETERS:")) {
+        return decl;
+      }
+
       const schema = decl.parameters || decl.parametersJsonSchema;
       if (!schema) return decl;
 
@@ -2224,10 +2358,18 @@ export function injectToolHardeningInstruction(
 ): void {
   if (!instructionText) return;
 
+  // Skip if instruction already present (avoids duplicate injection)
+  const existing = payload.systemInstruction as Record<string, unknown> | undefined;
+  if (existing && typeof existing === "object" && "parts" in existing) {
+    const parts = existing.parts as Array<{ text?: string }>;
+    if (Array.isArray(parts) && parts.some(p => p.text?.includes("CRITICAL TOOL USAGE INSTRUCTIONS"))) {
+      return;
+    }
+  }
+
   const instructionPart = { text: instructionText };
 
   if (payload.systemInstruction) {
-    const existing = payload.systemInstruction as Record<string, unknown>;
     if (existing && typeof existing === "object" && "parts" in existing) {
       const parts = existing.parts as unknown[];
       if (Array.isArray(parts)) {
@@ -2250,5 +2392,253 @@ export function injectToolHardeningInstruction(
       parts: [instructionPart],
     };
   }
+}
+
+// ============================================================================
+// TOOL PROCESSING FOR WRAPPED REQUESTS
+// Shared logic for assigning tool IDs and fixing tool pairing
+// ============================================================================
+
+/**
+ * Assigns IDs to functionCall parts and returns the pending call IDs by name.
+ * This is the first pass of tool ID assignment.
+ * 
+ * @param contents - Gemini-style contents array
+ * @returns Object with modified contents and pending call IDs map
+ */
+export function assignToolIdsToContents(
+  contents: any[]
+): { contents: any[]; pendingCallIdsByName: Map<string, string[]>; toolCallCounter: number } {
+  if (!Array.isArray(contents)) {
+    return { contents, pendingCallIdsByName: new Map(), toolCallCounter: 0 };
+  }
+
+  let toolCallCounter = 0;
+  const pendingCallIdsByName = new Map<string, string[]>();
+
+  const newContents = contents.map((content: any) => {
+    if (!content || !Array.isArray(content.parts)) {
+      return content;
+    }
+
+    const newParts = content.parts.map((part: any) => {
+      if (part && typeof part === "object" && part.functionCall) {
+        const call = { ...part.functionCall };
+        if (!call.id) {
+          call.id = `tool-call-${++toolCallCounter}`;
+        }
+        const nameKey = typeof call.name === "string" ? call.name : `tool-${toolCallCounter}`;
+        const queue = pendingCallIdsByName.get(nameKey) || [];
+        queue.push(call.id);
+        pendingCallIdsByName.set(nameKey, queue);
+        return { ...part, functionCall: call };
+      }
+      return part;
+    });
+
+    return { ...content, parts: newParts };
+  });
+
+  return { contents: newContents, pendingCallIdsByName, toolCallCounter };
+}
+
+/**
+ * Matches functionResponse IDs to their corresponding functionCall IDs.
+ * This is the second pass of tool ID assignment.
+ * 
+ * @param contents - Gemini-style contents array
+ * @param pendingCallIdsByName - Map of function names to pending call IDs
+ * @returns Modified contents with matched response IDs
+ */
+export function matchResponseIdsToContents(
+  contents: any[],
+  pendingCallIdsByName: Map<string, string[]>
+): any[] {
+  if (!Array.isArray(contents)) {
+    return contents;
+  }
+
+  return contents.map((content: any) => {
+    if (!content || !Array.isArray(content.parts)) {
+      return content;
+    }
+
+    const newParts = content.parts.map((part: any) => {
+      if (part && typeof part === "object" && part.functionResponse) {
+        const resp = { ...part.functionResponse };
+        if (!resp.id && typeof resp.name === "string") {
+          const queue = pendingCallIdsByName.get(resp.name);
+          if (queue && queue.length > 0) {
+            resp.id = queue.shift();
+            pendingCallIdsByName.set(resp.name, queue);
+          }
+        }
+        return { ...part, functionResponse: resp };
+      }
+      return part;
+    });
+
+    return { ...content, parts: newParts };
+  });
+}
+
+/**
+ * Applies all tool fixes to a request payload for Claude models.
+ * This includes:
+ * 1. Tool ID assignment for functionCalls
+ * 2. Response ID matching for functionResponses
+ * 3. Orphan recovery via fixToolResponseGrouping
+ * 4. Claude format pairing fix via validateAndFixClaudeToolPairing
+ * 
+ * @param payload - Request payload object
+ * @param isClaude - Whether this is a Claude model request
+ * @returns Object with fix applied status
+ */
+export function applyToolPairingFixes(
+  payload: Record<string, unknown>,
+  isClaude: boolean
+): { contentsFixed: boolean; messagesFixed: boolean } {
+  let contentsFixed = false;
+  let messagesFixed = false;
+
+  if (!isClaude) {
+    return { contentsFixed, messagesFixed };
+  }
+
+  // Fix Gemini format (contents[])
+  if (Array.isArray(payload.contents)) {
+    // First pass: assign IDs to functionCalls
+    const { contents: contentsWithIds, pendingCallIdsByName } = assignToolIdsToContents(
+      payload.contents as any[]
+    );
+
+    // Second pass: match functionResponse IDs
+    const contentsWithMatchedIds = matchResponseIdsToContents(contentsWithIds, pendingCallIdsByName);
+
+    // Third pass: fix orphan recovery
+    payload.contents = fixToolResponseGrouping(contentsWithMatchedIds);
+    contentsFixed = true;
+
+    log.debug("Applied tool pairing fixes to contents[]", {
+      originalLength: (payload.contents as any[]).length,
+    });
+  }
+
+  // Fix Claude format (messages[])
+  if (Array.isArray(payload.messages)) {
+    payload.messages = validateAndFixClaudeToolPairing(payload.messages as any[]);
+    messagesFixed = true;
+
+    log.debug("Applied tool pairing fixes to messages[]", {
+      originalLength: (payload.messages as any[]).length,
+    });
+  }
+
+  return { contentsFixed, messagesFixed };
+}
+
+// ============================================================================
+// SYNTHETIC CLAUDE SSE RESPONSE
+// Used to return error messages as "successful" responses to avoid locking
+// the OpenCode session when unrecoverable errors (like 400 Prompt Too Long) occur.
+// ============================================================================
+
+/**
+ * Creates a synthetic Claude SSE streaming response with error content.
+ * 
+ * When returning HTTP 400/500 errors to OpenCode, the session becomes locked
+ * and the user cannot use /compact or other commands. This function creates
+ * a fake "successful" SSE response (200 OK) with the error message as text content,
+ * allowing the user to continue using the session.
+ * 
+ * @param errorMessage - The error message to include in the response
+ * @param requestedModel - The model that was requested
+ * @returns A Response object with synthetic SSE stream
+ */
+export function createSyntheticErrorResponse(
+  errorMessage: string,
+  requestedModel: string = "unknown",
+): Response {
+  // Generate a unique message ID
+  const messageId = `msg_synthetic_${Date.now()}`;
+  
+  // Build Claude SSE events that represent a complete message with error text
+  const events: string[] = [];
+  
+  // 1. message_start event
+  events.push(`event: message_start
+data: ${JSON.stringify({
+    type: "message_start",
+    message: {
+      id: messageId,
+      type: "message",
+      role: "assistant",
+      content: [],
+      model: requestedModel,
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  })}
+
+`);
+
+  // 2. content_block_start event
+  events.push(`event: content_block_start
+data: ${JSON.stringify({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "text", text: "" },
+  })}
+
+`);
+
+  // 3. content_block_delta event with the error message
+  events.push(`event: content_block_delta
+data: ${JSON.stringify({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "text_delta", text: errorMessage },
+  })}
+
+`);
+
+  // 4. content_block_stop event
+  events.push(`event: content_block_stop
+data: ${JSON.stringify({
+    type: "content_block_stop",
+    index: 0,
+  })}
+
+`);
+
+  // 5. message_delta event (end_turn)
+  events.push(`event: message_delta
+data: ${JSON.stringify({
+    type: "message_delta",
+    delta: { stop_reason: "end_turn", stop_sequence: null },
+    usage: { output_tokens: Math.ceil(errorMessage.length / 4) },
+  })}
+
+`);
+
+  // 6. message_stop event
+  events.push(`event: message_stop
+data: ${JSON.stringify({ type: "message_stop" })}
+
+`);
+
+  const body = events.join("");
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Antigravity-Synthetic": "true",
+      "X-Antigravity-Error-Type": "prompt_too_long",
+    },
+  });
 }
 

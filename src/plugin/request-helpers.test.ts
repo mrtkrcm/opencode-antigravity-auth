@@ -17,6 +17,10 @@ import {
   findOrphanedToolUseIds,
   fixClaudeToolPairing,
   validateAndFixClaudeToolPairing,
+  injectParameterSignatures,
+  injectToolHardeningInstruction,
+  cleanJSONSchemaForAntigravity,
+  createSyntheticErrorResponse,
 } from "./request-helpers";
 
 describe("sanitizeThinkingPart (covered via filtering)", () => {
@@ -43,6 +47,7 @@ describe("sanitizeThinkingPart (covered via filtering)", () => {
           },
         ],
       },
+      { role: "model", parts: [{ text: "trailing" }] },
     ];
 
     const result = filterUnsignedThinkingBlocks(contents, "session-1", getCachedSignatureFn) as any;
@@ -80,6 +85,7 @@ describe("sanitizeThinkingPart (covered via filtering)", () => {
           },
         ],
       },
+      { role: "model", parts: [{ text: "trailing" }] },
     ];
 
     const result = filterUnsignedThinkingBlocks(contents, "session-1", getCachedSignatureFn) as any;
@@ -105,12 +111,13 @@ describe("sanitizeThinkingPart (covered via filtering)", () => {
               thinking: "restore me",
               cache_control: { type: "ephemeral" },
             },
-            // no signature present (forces restore)
             providerOptions: { injected: true },
           },
           { type: "text", text: "visible" },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
+      { role: "assistant", content: [{ type: "text", text: "last" }] },
     ];
 
     const result = filterMessagesThinkingBlocks(messages, "session-1", getCachedSignatureFn) as any;
@@ -140,6 +147,8 @@ describe("sanitizeThinkingPart (covered via filtering)", () => {
           { type: "text", text: "visible" },
         ],
       },
+      { role: "user", parts: [{ text: "next" }] },
+      { role: "model", parts: [{ text: "last" }] },
     ];
 
     const result = filterUnsignedThinkingBlocks(contents, "session-1", getCachedSignatureFn) as any;
@@ -310,6 +319,8 @@ describe("filterUnsignedThinkingBlocks", () => {
           { type: "text", text: "visible text" },
         ],
       },
+      { role: "user", parts: [{ text: "next" }] },
+      { role: "model", parts: [{ text: "last" }] },
     ];
     const result = filterUnsignedThinkingBlocks(contents);
     expect(result[0].parts).toHaveLength(1);
@@ -346,6 +357,8 @@ describe("filterUnsignedThinkingBlocks", () => {
           { type: "text", text: "visible text" },
         ],
       },
+      { role: "user", parts: [{ text: "next" }] },
+      { role: "model", parts: [{ text: "last" }] },
     ];
     const result = filterUnsignedThinkingBlocks(contents);
     expect(result[0].parts).toHaveLength(1);
@@ -361,6 +374,8 @@ describe("filterUnsignedThinkingBlocks", () => {
           { type: "text", text: "visible text" },
         ],
       },
+      { role: "user", parts: [{ text: "next" }] },
+      { role: "model", parts: [{ text: "last" }] },
     ];
     const result = filterUnsignedThinkingBlocks(contents);
     expect(result[0].parts).toHaveLength(1);
@@ -381,6 +396,8 @@ describe("filterUnsignedThinkingBlocks", () => {
           { thought: true, text: thinkingText, thoughtSignature: validSignature },
         ],
       },
+      { role: "user", parts: [{ text: "next" }] },
+      { role: "model", parts: [{ text: "last" }] },
     ];
     const result = filterUnsignedThinkingBlocks(contents, "session-1", getCachedSignatureFn);
     expect(result[0].parts).toHaveLength(1);
@@ -421,6 +438,8 @@ describe("filterUnsignedThinkingBlocks", () => {
           { type: "text", text: "visible" },
         ],
       },
+      { role: "user", parts: [{ text: "next" }] },
+      { role: "model", parts: [{ text: "last" }] },
     ];
     const result = filterUnsignedThinkingBlocks(contents);
     expect(result[0].parts).toHaveLength(1);
@@ -520,6 +539,7 @@ describe("deepFilterThinkingBlocks", () => {
               { type: "text", text: "visible" },
             ],
           },
+          { role: "assistant", content: [{ type: "text", text: "last" }] },
         ],
       },
     };
@@ -542,6 +562,7 @@ describe("filterMessagesThinkingBlocks", () => {
           { type: "text", text: "visible" },
         ],
       },
+      { role: "assistant", content: [{ type: "text", text: "last" }] },
     ];
 
     const result = filterMessagesThinkingBlocks(messages) as any;
@@ -569,6 +590,7 @@ describe("filterMessagesThinkingBlocks", () => {
           { type: "text", text: "visible" },
         ],
       },
+      { role: "assistant", content: [{ type: "text", text: "last" }] },
     ];
 
     const result = filterMessagesThinkingBlocks(messages, "session-1", getCachedSignatureFn) as any;
@@ -593,6 +615,7 @@ describe("filterMessagesThinkingBlocks", () => {
           { type: "text", text: "visible" },
         ],
       },
+      { role: "assistant", content: [{ type: "text", text: "last" }] },
     ];
 
     const result = filterMessagesThinkingBlocks(messages) as any;
@@ -609,6 +632,7 @@ describe("filterMessagesThinkingBlocks", () => {
           { type: "text", text: "visible" },
         ],
       },
+      { role: "assistant", content: [{ type: "text", text: "last" }] },
     ];
 
     const result = filterMessagesThinkingBlocks(messages) as any;
@@ -632,6 +656,7 @@ describe("filterMessagesThinkingBlocks", () => {
           { type: "text", text: "visible" },
         ],
       },
+      { role: "assistant", content: [{ type: "text", text: "last" }] },
     ];
 
     const result = filterMessagesThinkingBlocks(messages, "session-1", getCachedSignatureFn) as any;
@@ -661,6 +686,7 @@ describe("filterMessagesThinkingBlocks", () => {
           { type: "text", text: "visible" },
         ],
       },
+      { role: "assistant", content: [{ type: "text", text: "last" }] },
     ];
 
     const result = filterMessagesThinkingBlocks(messages, "session-1", getCachedSignatureFn) as any;
@@ -1105,5 +1131,401 @@ describe("validateAndFixClaudeToolPairing", () => {
 
   it("handles empty array", () => {
     expect(validateAndFixClaudeToolPairing([])).toEqual([]);
+  });
+});
+
+describe("injectParameterSignatures", () => {
+  it("injects signatures into tool descriptions", () => {
+    const tools = [
+      {
+        functionDeclarations: [
+          {
+            name: "read",
+            description: "Read a file",
+            parameters: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "File path" },
+              },
+              required: ["path"],
+            },
+          },
+        ],
+      },
+    ];
+
+    const result = injectParameterSignatures(tools);
+    expect(result[0].functionDeclarations[0].description).toContain("STRICT PARAMETERS:");
+    expect(result[0].functionDeclarations[0].description).toContain("path");
+    expect(result[0].functionDeclarations[0].description).toContain("REQUIRED");
+  });
+
+  it("skips injection if STRICT PARAMETERS already present", () => {
+    const tools = [
+      {
+        functionDeclarations: [
+          {
+            name: "read",
+            description: "Read a file\n\nSTRICT PARAMETERS: path (string, REQUIRED)",
+            parameters: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+              },
+              required: ["path"],
+            },
+          },
+        ],
+      },
+    ];
+
+    const result = injectParameterSignatures(tools);
+    const matches = result[0].functionDeclarations[0].description.match(/STRICT PARAMETERS/g);
+    expect(matches).toHaveLength(1);
+  });
+
+  it("skips tools without properties", () => {
+    const tools = [
+      {
+        functionDeclarations: [
+          {
+            name: "empty_tool",
+            description: "A tool with no params",
+            parameters: {
+              type: "object",
+              properties: {},
+            },
+          },
+        ],
+      },
+    ];
+
+    const result = injectParameterSignatures(tools);
+    expect(result[0].functionDeclarations[0].description).toBe("A tool with no params");
+  });
+
+  it("handles missing parameters gracefully", () => {
+    const tools = [
+      {
+        functionDeclarations: [
+          {
+            name: "no_params",
+            description: "No parameters defined",
+          },
+        ],
+      },
+    ];
+
+    const result = injectParameterSignatures(tools);
+    expect(result[0].functionDeclarations[0].description).toBe("No parameters defined");
+  });
+
+  it("returns empty array for empty input", () => {
+    expect(injectParameterSignatures([])).toEqual([]);
+  });
+
+  it("returns null/undefined as-is", () => {
+    expect(injectParameterSignatures(null as any)).toBeNull();
+    expect(injectParameterSignatures(undefined as any)).toBeUndefined();
+  });
+});
+
+describe("injectToolHardeningInstruction", () => {
+  it("injects system instruction when none exists", () => {
+    const payload: Record<string, unknown> = {};
+    injectToolHardeningInstruction(payload, "CRITICAL TOOL USAGE INSTRUCTIONS: Test");
+    
+    expect(payload.systemInstruction).toBeDefined();
+    const instruction = payload.systemInstruction as any;
+    expect(instruction.parts[0].text).toBe("CRITICAL TOOL USAGE INSTRUCTIONS: Test");
+  });
+
+  it("prepends to existing system instruction parts", () => {
+    const payload: Record<string, unknown> = {
+      systemInstruction: {
+        parts: [{ text: "Existing instruction" }],
+      },
+    };
+    injectToolHardeningInstruction(payload, "CRITICAL TOOL USAGE INSTRUCTIONS: New");
+    
+    const instruction = payload.systemInstruction as any;
+    expect(instruction.parts).toHaveLength(2);
+    expect(instruction.parts[0].text).toBe("CRITICAL TOOL USAGE INSTRUCTIONS: New");
+    expect(instruction.parts[1].text).toBe("Existing instruction");
+  });
+
+  it("skips injection if CRITICAL TOOL USAGE INSTRUCTIONS already present", () => {
+    const payload: Record<string, unknown> = {
+      systemInstruction: {
+        parts: [{ text: "CRITICAL TOOL USAGE INSTRUCTIONS: Already here" }],
+      },
+    };
+    injectToolHardeningInstruction(payload, "CRITICAL TOOL USAGE INSTRUCTIONS: New");
+    
+    const instruction = payload.systemInstruction as any;
+    expect(instruction.parts).toHaveLength(1);
+    expect(instruction.parts[0].text).toBe("CRITICAL TOOL USAGE INSTRUCTIONS: Already here");
+  });
+
+  it("handles string systemInstruction", () => {
+    const payload: Record<string, unknown> = {
+      systemInstruction: "Existing string instruction",
+    };
+    injectToolHardeningInstruction(payload, "CRITICAL TOOL USAGE INSTRUCTIONS: Test");
+    
+    const instruction = payload.systemInstruction as any;
+    expect(instruction.parts).toHaveLength(2);
+    expect(instruction.parts[0].text).toBe("CRITICAL TOOL USAGE INSTRUCTIONS: Test");
+    expect(instruction.parts[1].text).toBe("Existing string instruction");
+  });
+
+  it("does nothing when instructionText is empty", () => {
+    const payload: Record<string, unknown> = {};
+    injectToolHardeningInstruction(payload, "");
+    expect(payload.systemInstruction).toBeUndefined();
+  });
+});
+
+describe("placeholder parameter for empty schemas", () => {
+  it("uses _placeholder boolean instead of reason string", () => {
+    const tools = [
+      {
+        functionDeclarations: [
+          {
+            name: "todoread",
+            description: "Read todo list",
+            parameters: {
+              type: "object",
+              properties: {
+                _placeholder: { type: "boolean", description: "Placeholder. Always pass true." },
+              },
+              required: ["_placeholder"],
+            },
+          },
+        ],
+      },
+    ];
+
+    const result = injectParameterSignatures(tools);
+    expect(result[0].functionDeclarations[0].description).toContain("STRICT PARAMETERS:");
+    expect(result[0].functionDeclarations[0].description).toContain("_placeholder (boolean");
+  });
+});
+
+describe("cleanJSONSchemaForAntigravity", () => {
+  describe("enum merging from anyOf/oneOf", () => {
+    it("merges anyOf with const values into enum (WebFetch format pattern)", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          format: {
+            anyOf: [
+              { const: "text" },
+              { const: "markdown" },
+              { const: "html" },
+            ],
+          },
+        },
+      };
+
+      const result = cleanJSONSchemaForAntigravity(schema);
+
+      expect(result.properties.format.enum).toEqual(["text", "markdown", "html"]);
+      expect(result.properties.format.anyOf).toBeUndefined();
+      expect(result.properties.format.type).toBe("string");
+    });
+
+    it("merges oneOf with const values into enum", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          status: {
+            oneOf: [
+              { const: "pending" },
+              { const: "active" },
+              { const: "completed" },
+            ],
+          },
+        },
+      };
+
+      const result = cleanJSONSchemaForAntigravity(schema);
+
+      expect(result.properties.status.enum).toEqual(["pending", "active", "completed"]);
+      expect(result.properties.status.oneOf).toBeUndefined();
+    });
+
+    it("merges anyOf with single-value enums into combined enum", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          level: {
+            anyOf: [
+              { enum: ["low"] },
+              { enum: ["medium"] },
+              { enum: ["high"] },
+            ],
+          },
+        },
+      };
+
+      const result = cleanJSONSchemaForAntigravity(schema);
+
+      expect(result.properties.level.enum).toEqual(["low", "medium", "high"]);
+    });
+
+    it("merges anyOf with multi-value enums", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          color: {
+            anyOf: [
+              { enum: ["red", "blue"] },
+              { enum: ["green", "yellow"] },
+            ],
+          },
+        },
+      };
+
+      const result = cleanJSONSchemaForAntigravity(schema);
+
+      expect(result.properties.color.enum).toEqual(["red", "blue", "green", "yellow"]);
+    });
+
+    it("does not merge anyOf with complex types (not enum pattern)", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          data: {
+            anyOf: [
+              { type: "string" },
+              { type: "number" },
+            ],
+          },
+        },
+      };
+
+      const result = cleanJSONSchemaForAntigravity(schema);
+
+      expect(result.properties.data.enum).toBeUndefined();
+      expect(result.properties.data.type).toBe("string");
+    });
+
+    it("preserves parent description when merging enum", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          format: {
+            description: "Output format for the content",
+            anyOf: [
+              { const: "text" },
+              { const: "markdown" },
+            ],
+          },
+        },
+      };
+
+      const result = cleanJSONSchemaForAntigravity(schema);
+
+      expect(result.properties.format.enum).toEqual(["text", "markdown"]);
+      expect(result.properties.format.description).toContain("Output format");
+    });
+  });
+
+  it("adds enum hints to description", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["active", "inactive", "pending"],
+        },
+      },
+    };
+
+    const result = cleanJSONSchemaForAntigravity(schema);
+
+    expect(result.properties.status.description).toContain("Allowed:");
+    expect(result.properties.status.description).toContain("active");
+    expect(result.properties.status.description).toContain("inactive");
+    expect(result.properties.status.description).toContain("pending");
+  });
+
+  it("preserves existing enum array", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        level: {
+          type: "string",
+          enum: ["low", "medium", "high"],
+        },
+      },
+    };
+
+    const result = cleanJSONSchemaForAntigravity(schema);
+
+    expect(result.properties.level.enum).toEqual(["low", "medium", "high"]);
+  });
+});
+
+describe("createSyntheticErrorResponse", () => {
+  it("returns a Response with 200 OK status", async () => {
+    const response = createSyntheticErrorResponse("Test error", "claude-sonnet");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("includes error message in SSE stream content", async () => {
+    const response = createSyntheticErrorResponse("Context too long", "claude-sonnet");
+    const text = await response.text();
+
+    expect(text).toContain("Context too long");
+    expect(text).toContain("data:");
+    expect(text).toContain("message_start");
+    expect(text).toContain("message_stop");
+  });
+
+  it("uses provided model in message_start event", async () => {
+    const response = createSyntheticErrorResponse("Error", "claude-opus-4");
+    const text = await response.text();
+
+    expect(text).toContain("claude-opus-4");
+  });
+
+  it("generates valid Claude SSE event structure", async () => {
+    const response = createSyntheticErrorResponse("Test", "test-model");
+    const text = await response.text();
+    const lines = text.split("\n").filter((l) => l.startsWith("data:"));
+
+    expect(lines.length).toBeGreaterThanOrEqual(5);
+
+    const events = lines.map((l) => JSON.parse(l.replace("data: ", "")));
+    const eventTypes = events.map((e) => e.type);
+
+    expect(eventTypes).toContain("message_start");
+    expect(eventTypes).toContain("content_block_start");
+    expect(eventTypes).toContain("content_block_delta");
+    expect(eventTypes).toContain("content_block_stop");
+    expect(eventTypes).toContain("message_stop");
+  });
+
+  it("includes error message in content_block_delta", async () => {
+    const response = createSyntheticErrorResponse("Something failed", "model");
+    const text = await response.text();
+    const lines = text.split("\n").filter((l) => l.startsWith("data:"));
+    const events = lines.map((l) => JSON.parse(l.replace("data: ", "")));
+    const delta = events.find((e) => e.type === "content_block_delta");
+
+    expect(delta?.delta?.text).toBe("Something failed");
+  });
+
+  it("sets end_turn stop reason in message_delta", async () => {
+    const response = createSyntheticErrorResponse("Error", "model");
+    const text = await response.text();
+    const lines = text.split("\n").filter((l) => l.startsWith("data:"));
+    const events = lines.map((l) => JSON.parse(l.replace("data: ", "")));
+    const messageDelta = events.find((e) => e.type === "message_delta");
+
+    expect(messageDelta?.delta?.stop_reason).toBe("end_turn");
   });
 });
